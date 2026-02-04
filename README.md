@@ -105,19 +105,19 @@ FASTMAIL_API_TOKEN="your_token" \
   npx --yes github:MadLlama25/fastmail-mcp@v1.6.1 fastmail-mcp
 ```
 
-## Install as a Claude Desktop Extension (DXT)
+## Install as an MCP Bundle (MCPB)
 
-You can install this server as a Desktop Extension for Claude Desktop using the packaged `.dxt` file.
+You can install this server as an MCP Bundle for Claude Desktop using the packaged `.mcpb` file.
 
 1. Build and pack:
    ```bash
    npm run build
-   npx dxt pack
+   npx @anthropic-ai/mcpb pack
    ```
-   This produces `fastmail-mcp.dxt` in the project root.
+   This produces `fastmail-mcp.mcpb` in the project root.
 
 2. Install into Claude Desktop:
-   - Open the `.dxt` file, or drag it into Claude Desktop
+   - Open the `.mcpb` file, or drag it into Claude Desktop
    - When prompted:
      - Fastmail API Token: paste your token (stored encrypted by Claude)
      - Fastmail Base URL: leave blank to use `https://api.fastmail.com` (default)
@@ -284,7 +284,7 @@ For more detailed error information, check the console output when running the s
 
 ## Privacy & Security
 
-- API tokens are stored encrypted by Claude Desktop when installed via the DXT and are never logged by this server.
+- API tokens are stored encrypted by Claude Desktop when installed via the MCP Bundle and are never logged by this server.
 - The server avoids logging raw errors and sensitive data (tokens, email addresses, identities, attachment names/blobIds) in error messages.
 - Tool responses may include your email metadata/content by design (e.g., listing emails) but internal identifiers and credentials are not disclosed beyond what Fastmail returns for the requested data.
 - If you encounter errors, messages are sanitized and summarized to prevent leaking personal information.
