@@ -1,5 +1,9 @@
 # Fastmail MCP Server
 
+> **Note:** This is a fork of [jeremygill/fastmail-mcp](https://github.com/jeremygill/fastmail-mcp) with modifications to update packaging.
+
+Original author: Jeremy Gill
+
 A Model Context Protocol (MCP) server that provides access to the Fastmail API, enabling AI assistants to interact with email, contacts, and calendar data.
 
 ## Features
