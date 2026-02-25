@@ -11,6 +11,15 @@ import { FastmailAuth, FastmailConfig } from './auth.js';
 import { JmapClient, JmapRequest } from './jmap-client.js';
 import { ContactsCalendarClient } from './contacts-calendar.js';
 
+/** Safely stringify data for MCP text responses. Never returns undefined. */
+function safeStringify(data: unknown): string {
+  const result = JSON.stringify(data, null, 2);
+  if (typeof result !== 'string') {
+    return JSON.stringify({ error: 'No data returned', raw: String(data) });
+  }
+  return result;
+}
+
 const server = new Server(
   {
     name: 'fastmail-mcp',
@@ -665,7 +674,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(mailboxes, null, 2),
+              text: safeStringify(mailboxes),
             },
           ],
         };
@@ -678,7 +687,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(emails, null, 2),
+              text: safeStringify(emails),
             },
           ],
         };
@@ -694,7 +703,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(email, null, 2),
+              text: safeStringify(email),
             },
           ],
         };
@@ -759,13 +768,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         const response = await client.makeRequest(request);
-        const emails = response.methodResponses[1][1].list;
+        // Check for JMAP method-level errors
+        if (response.methodResponses[0]?.[0] === 'error') {
+          const err = response.methodResponses[0][1];
+          throw new Error(`Search query failed: ${err?.type || 'unknown'} ${err?.description || ''}`);
+        }
+        if (response.methodResponses[1]?.[0] === 'error') {
+          const err = response.methodResponses[1][1];
+          throw new Error(`Search fetch failed: ${err?.type || 'unknown'} ${err?.description || ''}`);
+        }
+        const emails = response.methodResponses[1]?.[1]?.list || [];
 
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(emails, null, 2),
+              text: safeStringify(emails),
             },
           ],
         };
@@ -779,7 +797,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(contacts, null, 2),
+              text: safeStringify(contacts),
             },
           ],
         };
@@ -796,7 +814,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(contact, null, 2),
+              text: safeStringify(contact),
             },
           ],
         };
@@ -813,7 +831,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(contacts, null, 2),
+              text: safeStringify(contacts),
             },
           ],
         };
@@ -826,7 +844,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(calendars, null, 2),
+              text: safeStringify(calendars),
             },
           ],
         };
@@ -840,7 +858,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(events, null, 2),
+              text: safeStringify(events),
             },
           ],
         };
@@ -857,7 +875,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(event, null, 2),
+              text: safeStringify(event),
             },
           ],
         };
@@ -896,7 +914,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(identities, null, 2),
+              text: safeStringify(identities),
             },
           ],
         };
@@ -910,7 +928,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(emails, null, 2),
+              text: safeStringify(emails),
             },
           ],
         };
@@ -978,7 +996,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(attachments, null, 2),
+              text: safeStringify(attachments),
             },
           ],
         };
@@ -1019,7 +1037,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(emails, null, 2),
+              text: safeStringify(emails),
             },
           ],
         };
@@ -1037,7 +1055,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify(thread, null, 2),
+                text: safeStringify(thread),
               },
             ],
           };
@@ -1055,7 +1073,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(stats, null, 2),
+              text: safeStringify(stats),
             },
           ],
         };
@@ -1068,7 +1086,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(summary, null, 2),
+              text: safeStringify(summary),
             },
           ],
         };
@@ -1185,7 +1203,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(availability, null, 2),
+              text: safeStringify(availability),
             },
           ],
         };
@@ -1245,7 +1263,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [
               {
                 type: 'text',
-                text: `BULK OPERATIONS TEST (DRY RUN)\n\n${JSON.stringify(results, null, 2)}\n\nTo actually execute the test, set dryRun: false`,
+                text: `BULK OPERATIONS TEST (DRY RUN)\n\n${safeStringify(results)}\n\nTo actually execute the test, set dryRun: false`,
               },
             ],
           };
@@ -1278,7 +1296,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [
               {
                 type: 'text',
-                text: `BULK OPERATIONS TEST (EXECUTED)\n\n${JSON.stringify(results, null, 2)}`,
+                text: `BULK OPERATIONS TEST (EXECUTED)\n\n${safeStringify(results)}`,
               },
             ],
           };

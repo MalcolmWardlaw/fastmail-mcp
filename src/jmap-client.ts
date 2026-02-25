@@ -41,10 +41,28 @@ export class JmapClient {
     }
 
     const sessionData = await response.json() as any;
-    
+
+    // Find the account that supports mail (urn:ietf:params:jmap:mail)
+    const mailCapability = 'urn:ietf:params:jmap:mail';
+    let accountId: string | undefined;
+    for (const [id, account] of Object.entries(sessionData.accounts as Record<string, any>)) {
+      if (account.accountCapabilities && mailCapability in account.accountCapabilities) {
+        accountId = id;
+        break;
+      }
+    }
+    if (!accountId) {
+      // Fallback to primaryAccounts for mail if per-account lookup failed
+      accountId = sessionData.primaryAccounts?.[mailCapability];
+    }
+    if (!accountId) {
+      // Last resort: first account key
+      accountId = Object.keys(sessionData.accounts)[0];
+    }
+
     this.session = {
       apiUrl: sessionData.apiUrl,
-      accountId: Object.keys(sessionData.accounts)[0],
+      accountId,
       capabilities: sessionData.capabilities,
       downloadUrl: sessionData.downloadUrl,
       uploadUrl: sessionData.uploadUrl
@@ -65,7 +83,7 @@ export class JmapClient {
 
   async makeRequest(request: JmapRequest): Promise<JmapResponse> {
     const session = await this.getSession();
-    
+
     const response = await fetch(session.apiUrl, {
       method: 'POST',
       headers: this.auth.getAuthHeaders(),
@@ -73,15 +91,47 @@ export class JmapClient {
     });
 
     if (!response.ok) {
-      throw new Error(`JMAP request failed: ${response.statusText}`);
+      // Clear cached session on auth failures so next call re-authenticates
+      if (response.status === 401 || response.status === 403) {
+        this.session = null;
+      }
+      throw new Error(`JMAP request failed: ${response.status} ${response.statusText}`);
     }
 
-    return await response.json() as JmapResponse;
+    const data = await response.json() as JmapResponse;
+
+    if (!data.methodResponses || !Array.isArray(data.methodResponses)) {
+      throw new Error('JMAP response missing methodResponses');
+    }
+
+    return data;
+  }
+
+  /**
+   * Extract the result from a JMAP method response, checking for method-level errors.
+   * JMAP can return ["error", {type: "...", description: "..."}, "tag"] even on HTTP 200.
+   */
+  private extractMethodResult(response: JmapResponse, index: number, expectedMethod?: string): any {
+    const entry = response.methodResponses[index];
+    if (!entry) {
+      throw new Error(`JMAP response missing method at index ${index} (got ${response.methodResponses.length} responses)`);
+    }
+    const [methodName, result, tag] = entry;
+    if (methodName === 'error') {
+      const errType = result?.type || 'unknown';
+      const errDesc = result?.description || '';
+      // Clear session cache on auth-related JMAP errors
+      if (errType === 'unauthorized' || errType === 'forbidden') {
+        this.session = null;
+      }
+      throw new Error(`JMAP method error [${errType}]: ${errDesc}`.trim());
+    }
+    return result;
   }
 
   async getMailboxes(): Promise<any[]> {
     const session = await this.getSession();
-    
+
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
       methodCalls: [
@@ -90,14 +140,18 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    return response.methodResponses[0][1].list;
+    const result = this.extractMethodResult(response, 0, 'Mailbox/get');
+    if (!result?.list || !Array.isArray(result.list)) {
+      throw new Error('Mailbox/get returned no mailbox list');
+    }
+    return result.list;
   }
 
   async getEmails(mailboxId?: string, limit: number = 20): Promise<any[]> {
     const session = await this.getSession();
-    
+
     const filter = mailboxId ? { inMailbox: mailboxId } : {};
-    
+
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
       methodCalls: [
@@ -116,7 +170,9 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    return response.methodResponses[1][1].list;
+    this.extractMethodResult(response, 0, 'Email/query');
+    const result = this.extractMethodResult(response, 1, 'Email/get');
+    return result?.list || [];
   }
 
   async getEmailById(id: string): Promise<any> {
@@ -137,23 +193,23 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-    
+    const result = this.extractMethodResult(response, 0, 'Email/get');
+
     if (result.notFound && result.notFound.includes(id)) {
       throw new Error(`Email with ID '${id}' not found`);
     }
-    
-    const email = result.list[0];
+
+    const email = result.list?.[0];
     if (!email) {
       throw new Error(`Email with ID '${id}' not found or not accessible`);
     }
-    
+
     return email;
   }
 
   async getIdentities(): Promise<any[]> {
     const session = await this.getSession();
-    
+
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:submission'],
       methodCalls: [
@@ -164,7 +220,8 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    return response.methodResponses[0][1].list;
+    const result = this.extractMethodResult(response, 0, 'Identity/get');
+    return result?.list || [];
   }
 
   async getDefaultIdentity(): Promise<any> {
@@ -281,19 +338,19 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    
+
     // Check if email creation was successful
-    const emailResult = response.methodResponses[0][1];
+    const emailResult = this.extractMethodResult(response, 0, 'Email/set');
     if (emailResult.notCreated && emailResult.notCreated.draft) {
       throw new Error('Failed to create email. Please check inputs and try again.');
     }
-    
+
     // Check if email submission was successful
-    const submissionResult = response.methodResponses[1][1];
+    const submissionResult = this.extractMethodResult(response, 1, 'EmailSubmission/set');
     if (submissionResult.notCreated && submissionResult.notCreated.submission) {
       throw new Error('Failed to submit email. Please try again later.');
     }
-    
+
     return submissionResult.created?.submission?.id || 'unknown';
   }
 
@@ -329,7 +386,9 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    return response.methodResponses[1][1].list;
+    this.extractMethodResult(response, 0, 'Email/query');
+    const result = this.extractMethodResult(response, 1, 'Email/get');
+    return result?.list || [];
   }
 
   async markEmailRead(emailId: string, read: boolean = true): Promise<void> {
@@ -352,8 +411,8 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-    
+    const result = this.extractMethodResult(response, 0, 'Email/set');
+
     if (result.notUpdated && result.notUpdated[emailId]) {
       throw new Error(`Failed to mark email as ${read ? 'read' : 'unread'}.`);
     }
@@ -388,8 +447,8 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-    
+    const result = this.extractMethodResult(response, 0, 'Email/set');
+
     if (result.notUpdated && result.notUpdated[emailId]) {
       throw new Error('Failed to delete email.');
     }
@@ -416,8 +475,8 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-    
+    const result = this.extractMethodResult(response, 0, 'Email/set');
+
     if (result.notUpdated && result.notUpdated[emailId]) {
       throw new Error('Failed to move email.');
     }
@@ -438,7 +497,8 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const email = response.methodResponses[0][1].list[0];
+    const result = this.extractMethodResult(response, 0, 'Email/get');
+    const email = result?.list?.[0];
     return email?.attachments || [];
   }
 
@@ -459,8 +519,9 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const email = response.methodResponses[0][1].list[0];
-    
+    const result = this.extractMethodResult(response, 0, 'Email/get');
+    const email = result?.list?.[0];
+
     if (!email) {
       throw new Error('Email not found');
     }
@@ -547,7 +608,9 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    return response.methodResponses[1][1].list;
+    this.extractMethodResult(response, 0, 'Email/query');
+    const result = this.extractMethodResult(response, 1, 'Email/get');
+    return result?.list || [];
   }
 
   async getThread(threadId: string): Promise<any[]> {
@@ -570,7 +633,8 @@ export class JmapClient {
       };
       
       const emailResponse = await this.makeRequest(emailRequest);
-      const email = emailResponse.methodResponses[0][1].list[0];
+      const emailResult = this.extractMethodResult(emailResponse, 0, 'Email/get');
+      const email = emailResult?.list?.[0];
       
       if (email && email.threadId) {
         actualThreadId = email.threadId;
@@ -596,14 +660,15 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const threadResult = response.methodResponses[0][1];
-    
+    const threadResult = this.extractMethodResult(response, 0, 'Thread/get');
+
     // Check if thread was found
     if (threadResult.notFound && threadResult.notFound.includes(actualThreadId)) {
       throw new Error(`Thread with ID '${actualThreadId}' not found`);
     }
-    
-    return response.methodResponses[1][1].list;
+
+    const emailResult = this.extractMethodResult(response, 1, 'Email/get');
+    return emailResult?.list || [];
   }
 
   async getMailboxStats(mailboxId?: string): Promise<any> {
@@ -623,7 +688,8 @@ export class JmapClient {
       };
 
       const response = await this.makeRequest(request);
-      return response.methodResponses[0][1].list[0];
+      const result = this.extractMethodResult(response, 0, 'Mailbox/get');
+      return result?.list?.[0];
     } else {
       // Get stats for all mailboxes
       const mailboxes = await this.getMailboxes();
@@ -688,8 +754,8 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-    
+    const result = this.extractMethodResult(response, 0, 'Email/set');
+
     if (result.notUpdated && Object.keys(result.notUpdated).length > 0) {
       throw new Error('Failed to update some emails.');
     }
@@ -717,8 +783,8 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-    
+    const result = this.extractMethodResult(response, 0, 'Email/set');
+
     if (result.notUpdated && Object.keys(result.notUpdated).length > 0) {
       throw new Error('Failed to move some emails.');
     }
@@ -754,8 +820,8 @@ export class JmapClient {
     };
 
     const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-    
+    const result = this.extractMethodResult(response, 0, 'Email/set');
+
     if (result.notUpdated && Object.keys(result.notUpdated).length > 0) {
       throw new Error('Failed to delete some emails.');
     }
