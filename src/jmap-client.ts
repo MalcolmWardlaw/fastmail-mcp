@@ -4,6 +4,7 @@ export interface JmapSession {
   apiUrl: string;
   accountId: string;
   capabilities: Record<string, any>;
+  accountCapabilities?: Record<string, any>;
   downloadUrl?: string;
   uploadUrl?: string;
 }
@@ -64,6 +65,7 @@ export class JmapClient {
       apiUrl: sessionData.apiUrl,
       accountId,
       capabilities: sessionData.capabilities,
+      accountCapabilities: sessionData.accounts?.[accountId]?.accountCapabilities,
       downloadUrl: sessionData.downloadUrl,
       uploadUrl: sessionData.uploadUrl
     };
@@ -111,7 +113,7 @@ export class JmapClient {
    * Extract the result from a JMAP method response, checking for method-level errors.
    * JMAP can return ["error", {type: "...", description: "..."}, "tag"] even on HTTP 200.
    */
-  private extractMethodResult(response: JmapResponse, index: number, expectedMethod?: string): any {
+  protected extractMethodResult(response: JmapResponse, index: number, expectedMethod?: string): any {
     const entry = response.methodResponses[index];
     if (!entry) {
       throw new Error(`JMAP response missing method at index ${index} (got ${response.methodResponses.length} responses)`);

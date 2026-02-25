@@ -1,17 +1,25 @@
 import { JmapClient, JmapRequest } from './jmap-client.js';
 
 export class ContactsCalendarClient extends JmapClient {
-  
+
   private async checkContactsPermission(): Promise<boolean> {
     const session = await this.getSession();
+    // Check per-account capabilities (where JMAP actually reports them),
+    // then fall back to server-level capabilities
+    if (session.accountCapabilities) {
+      return 'urn:ietf:params:jmap:contacts' in session.accountCapabilities;
+    }
     return !!session.capabilities['urn:ietf:params:jmap:contacts'];
   }
-  
+
   private async checkCalendarsPermission(): Promise<boolean> {
     const session = await this.getSession();
+    if (session.accountCapabilities) {
+      return 'urn:ietf:params:jmap:calendars' in session.accountCapabilities;
+    }
     return !!session.capabilities['urn:ietf:params:jmap:calendars'];
   }
-  
+
   async getContacts(limit: number = 50): Promise<any[]> {
     // Check permissions first
     const hasPermission = await this.checkContactsPermission();
@@ -20,7 +28,7 @@ export class ContactsCalendarClient extends JmapClient {
     }
 
     const session = await this.getSession();
-    
+
     // Try CardDAV namespace first, then Fastmail specific
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:contacts'],
@@ -39,7 +47,8 @@ export class ContactsCalendarClient extends JmapClient {
 
     try {
       const response = await this.makeRequest(request);
-      return response.methodResponses[1][1].list;
+      const result = this.extractMethodResult(response, 1, 'Contact/get');
+      return result?.list || [];
     } catch (error) {
       // Fallback: try to get contacts using AddressBook methods
       const fallbackRequest: JmapRequest = {
@@ -50,10 +59,11 @@ export class ContactsCalendarClient extends JmapClient {
           }, 'addressbooks']
         ]
       };
-      
+
       try {
         const fallbackResponse = await this.makeRequest(fallbackRequest);
-        return fallbackResponse.methodResponses[0][1].list || [];
+        const fallbackResult = this.extractMethodResult(fallbackResponse, 0, 'AddressBook/get');
+        return fallbackResult?.list || [];
       } catch (fallbackError) {
         throw new Error(`Contacts not supported or accessible: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling contacts API access in Fastmail settings.`);
       }
@@ -68,7 +78,7 @@ export class ContactsCalendarClient extends JmapClient {
     }
 
     const session = await this.getSession();
-    
+
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:contacts'],
       methodCalls: [
@@ -81,7 +91,8 @@ export class ContactsCalendarClient extends JmapClient {
 
     try {
       const response = await this.makeRequest(request);
-      return response.methodResponses[0][1].list[0];
+      const result = this.extractMethodResult(response, 0, 'Contact/get');
+      return result?.list?.[0];
     } catch (error) {
       throw new Error(`Contact access not supported: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling contacts API access in Fastmail settings.`);
     }
@@ -95,7 +106,7 @@ export class ContactsCalendarClient extends JmapClient {
     }
 
     const session = await this.getSession();
-    
+
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:contacts'],
       methodCalls: [
@@ -114,7 +125,8 @@ export class ContactsCalendarClient extends JmapClient {
 
     try {
       const response = await this.makeRequest(request);
-      return response.methodResponses[1][1].list;
+      const result = this.extractMethodResult(response, 1, 'Contact/get');
+      return result?.list || [];
     } catch (error) {
       throw new Error(`Contact search not supported: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling contacts API access in Fastmail settings.`);
     }
@@ -128,7 +140,7 @@ export class ContactsCalendarClient extends JmapClient {
     }
 
     const session = await this.getSession();
-    
+
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:calendars'],
       methodCalls: [
@@ -140,10 +152,10 @@ export class ContactsCalendarClient extends JmapClient {
 
     try {
       const response = await this.makeRequest(request);
-      return response.methodResponses[0][1].list;
+      const result = this.extractMethodResult(response, 0, 'Calendar/get');
+      return result?.list || [];
     } catch (error) {
-      // Calendar access might require special permissions
-      throw new Error(`Calendar access not supported or requires additional permissions. This may be due to account settings or JMAP scope limitations: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling calendar API access in Fastmail settings.`);
+      throw new Error(`Calendar access not supported or requires additional permissions: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling calendar API access in Fastmail settings.`);
     }
   }
 
@@ -155,9 +167,9 @@ export class ContactsCalendarClient extends JmapClient {
     }
 
     const session = await this.getSession();
-    
+
     const filter = calendarId ? { inCalendar: calendarId } : {};
-    
+
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:calendars'],
       methodCalls: [
@@ -177,7 +189,8 @@ export class ContactsCalendarClient extends JmapClient {
 
     try {
       const response = await this.makeRequest(request);
-      return response.methodResponses[1][1].list;
+      const result = this.extractMethodResult(response, 1, 'CalendarEvent/get');
+      return result?.list || [];
     } catch (error) {
       throw new Error(`Calendar events access not supported: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling calendar API access in Fastmail settings.`);
     }
@@ -191,7 +204,7 @@ export class ContactsCalendarClient extends JmapClient {
     }
 
     const session = await this.getSession();
-    
+
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:calendars'],
       methodCalls: [
@@ -204,7 +217,8 @@ export class ContactsCalendarClient extends JmapClient {
 
     try {
       const response = await this.makeRequest(request);
-      return response.methodResponses[0][1].list[0];
+      const result = this.extractMethodResult(response, 0, 'CalendarEvent/get');
+      return result?.list?.[0];
     } catch (error) {
       throw new Error(`Calendar event access not supported: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling calendar API access in Fastmail settings.`);
     }
@@ -249,7 +263,12 @@ export class ContactsCalendarClient extends JmapClient {
 
     try {
       const response = await this.makeRequest(request);
-      return response.methodResponses[0][1].created.newEvent.id;
+      const result = this.extractMethodResult(response, 0, 'CalendarEvent/set');
+      const newId = result?.created?.newEvent?.id;
+      if (!newId) {
+        throw new Error('CalendarEvent/set succeeded but returned no event ID');
+      }
+      return newId;
     } catch (error) {
       throw new Error(`Calendar event creation not supported: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling calendar API access in Fastmail settings.`);
     }
